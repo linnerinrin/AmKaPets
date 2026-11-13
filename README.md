@@ -1,6 +1,6 @@
 # ka-am-pet
 
-Python 阉割版 Windows 桌宠：心情贴图、点击互动、拖拽甩抛、多宠物碰撞、OpenAI 兼容对话，
+Windows 桌宠：心情贴图、点击互动、拖拽甩抛、多宠物碰撞、OpenAI 兼容对话，
 支持 overlay / desktop 两种模式，最终打包为桌面 EXE 双击即用。
 
 默认宠物：超天酱（kangel）与糖糖（ame），心情系统四档（happy/smile/sad/angry）实时切换贴图。
