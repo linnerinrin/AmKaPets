@@ -1,0 +1,64 @@
+{
+  "kangel": [
+    {
+      "role": "user",
+      "content": "问0",
+      "ts": 1794586942.933419
+    },
+    {
+      "role": "assistant",
+      "content": "答0",
+      "ts": 1794586942.934925
+    },
+    {
+      "role": "user",
+      "content": "问1",
+      "ts": 1794586942.9359276
+    },
+    {
+      "role": "assistant",
+      "content": "答1",
+      "ts": 1794586942.936928
+    },
+    {
+      "role": "user",
+      "content": "问2",
+      "ts": 1794586942.9389296
+    },
+    {
+      "role": "assistant",
+      "content": "答2",
+      "ts": 1794586942.940959
+    },
+    {
+      "role": "user",
+      "content": "问3",
+      "ts": 1794586942.9419308
+    },
+    {
+      "role": "assistant",
+      "content": "答3",
+      "ts": 1794586942.9434357
+    },
+    {
+      "role": "user",
+      "content": "问4",
+      "ts": 1794586942.9454453
+    },
+    {
+      "role": "assistant",
+      "content": "答4",
+      "ts": 1794586942.946445
+    },
+    {
+      "role": "user",
+      "content": "问5",
+      "ts": 1794586942.947445
+    },
+    {
+      "role": "assistant",
+      "content": "答5",
+      "ts": 1794586942.9494455
+    }
+  ]
+}

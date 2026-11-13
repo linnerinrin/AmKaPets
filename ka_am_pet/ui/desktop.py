@@ -59,6 +59,11 @@ class DesktopWindow(QWidget):
         for widget in self._widgets:
             widget.tick()
 
+    def music_reaction(self) -> None:
+        """系统正在播放音乐时，让每只宠物做一次触摸回应动画。"""
+        for widget in self._widgets:
+            widget.play_music_reaction()
+
     def close_shell(self) -> None:
         """模式切换时关闭全部宠物窗口（不退出应用）。"""
         for widget in self._widgets:

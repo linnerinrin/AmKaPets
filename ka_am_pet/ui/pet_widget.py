@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import time
 
 from PySide6.QtCore import QPoint, QRectF, Qt, Signal
@@ -18,6 +19,7 @@ _CLICK_ANIM_S = 0.2       # 点击拉伸动画总时长（横拉-回-纵拉-回�
 _CLICK_STRETCH = 1.25     # 点击拉伸幅度
 _POPUP_S = 0.8            # 心情浮动飘字时长
 _FLIP_HALF_S = 0.1        # 镜像翻转单侧（压缩/展开）时长
+_MUSIC_TEXTS = ("♪", "♪ 好听", "♫ 摇摆", "♪ 一起听")  # 听见音乐时的飘字
 
 
 class PetWidget(QWidget):
@@ -115,6 +117,14 @@ class PetWidget(QWidget):
         delta = tracker.last_delta
         sign = f"+{delta:g}" if delta > 0 else f"{delta:g}"
         self._popup_text = f"心情 {sign} → {value:.0f}"
+        self._popup_at = now
+        self.update()
+
+    def play_music_reaction(self) -> None:
+        """听见系统音乐时的触摸回应：同样的 0.2s 拉伸动画 + ♪ 飘字（不改心情值）。"""
+        now = time.monotonic()
+        self._click_anim_at = now
+        self._popup_text = random.choice(_MUSIC_TEXTS)
         self._popup_at = now
         self.update()
 

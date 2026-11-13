@@ -9,6 +9,7 @@ from PySide6.QtGui import QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from . import config as config_mod
+from .audio import AudioWatcher
 from .db import InstanceDB, PetInstance
 from .models import AppSettings, PetConfig
 from .mood import MOOD_LEVELS, mood_image_name
@@ -45,6 +46,8 @@ class PetApplication:
         self._config_path = config_mod.default_config_path()
         self._chat_dialogs: dict[str, ChatDialog] = {}
         self._tray: QSystemTrayIcon | None = None
+        self._audio: AudioWatcher | None = None
+        self._music_enabled = True
 
     # ---- 启动流程 ----
 
@@ -71,6 +74,7 @@ class PetApplication:
 
         self._show_shell()
         self._setup_tray()
+        self._sync_audio_watcher()
 
         self._elapsed.start()
         self._timer = QTimer()
@@ -78,6 +82,9 @@ class PetApplication:
         self._timer.timeout.connect(self._tick)
         self._timer.start()
         code = self.qt_app.exec()
+        if self._audio is not None:
+            self._audio.stop()
+            self._audio = None
         self._save_positions()
         return code
 
@@ -143,6 +150,28 @@ class PetApplication:
             self.world.update(dt)
         if self._shell is not None:
             self._shell.tick()
+        if self._audio is not None and self._audio.take_trigger() and self._shell is not None:
+            self._shell.music_reaction()
+
+    # ---- 音乐律动（系统音频检测） ----
+
+    def _sync_audio_watcher(self) -> None:
+        """按开关启动/停止后台音频监听；设备不可用时静默跳过（不影响桌宠）。"""
+        if self._music_enabled and self._audio is None:
+            watcher = AudioWatcher()
+            if watcher.available:
+                self._audio = watcher
+                watcher.start()
+            else:
+                _log.info("音频监听不可用，已跳过音乐律动")
+        elif not self._music_enabled and self._audio is not None:
+            self._audio.stop()
+            self._audio = None
+
+    def _toggle_music(self, enabled: bool) -> None:
+        """右键/托盘菜单里的「音乐律动」开关。"""
+        self._music_enabled = bool(enabled)
+        self._sync_audio_watcher()
 
     def _virtual_bounds(self) -> tuple[float, float, float, float]:
         """所有屏幕可用工作区的并集 (left, top, right, bottom)。"""
@@ -230,6 +259,10 @@ class PetApplication:
             lambda: self.switch_mode("overlay" if (self.settings and self.settings.mode == "desktop") else "desktop"),
         )
         menu.addAction("全局设置…", self._open_settings)
+        music_act = menu.addAction("音乐律动（听到音乐就摇摆）")
+        music_act.setCheckable(True)
+        music_act.setChecked(self._music_enabled)
+        music_act.toggled.connect(self._toggle_music)
         menu.addSeparator()
         menu.addAction("退出", self._quit)
         self._tray.setContextMenu(menu)
@@ -291,6 +324,9 @@ class PetApplication:
         action_mode = menu.addAction(
             "切换到 overlay 模式" if (self.settings and self.settings.mode == "desktop") else "切换到 desktop 模式"
         )
+        action_music = menu.addAction("音乐律动")
+        action_music.setCheckable(True)
+        action_music.setChecked(self._music_enabled)
         menu.addSeparator()
         action_quit = menu.addAction("退出")
         chosen = menu.exec(global_pos)
@@ -300,6 +336,8 @@ class PetApplication:
             self._open_settings()
         elif chosen is action_mode:
             self.switch_mode("overlay" if (self.settings and self.settings.mode == "desktop") else "desktop")
+        elif chosen is action_music:
+            self._toggle_music(action_music.isChecked())
         elif chosen is action_quit:
             self._quit()
 
@@ -386,5 +424,8 @@ class PetApplication:
                 _log.exception("保存位置失败: %s", pet.pet_id)
 
     def _quit(self) -> None:
+        if self._audio is not None:
+            self._audio.stop()
+            self._audio = None
         self._save_positions()
         self.qt_app.quit()
