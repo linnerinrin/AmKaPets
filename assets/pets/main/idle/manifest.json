@@ -1,0 +1,8 @@
+{
+  "name": "idle",
+  "fps": 12,
+  "loop": true,
+  "frames": ["placeholder_001.png"],
+  "width": 640,
+  "height": 360
+}

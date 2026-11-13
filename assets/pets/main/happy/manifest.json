@@ -1,0 +1,8 @@
+{
+  "name": "happy",
+  "fps": 24,
+  "loop": false,
+  "frames": ["placeholder_001.png"],
+  "width": 640,
+  "height": 360
+}

@@ -1,0 +1,18 @@
+venv/
+__pycache__/
+*.pyc
+dist/
+build/
+*.spec
+.pytest_cache/
+.idea/
+
+# 本地 wheelhouse 缓存（约 120MB，不入库）
+wheelhouse/
+
+# 本地冒烟/调试产物
+.smoke_appdata*/
+.tmp_extract*/
+popup_smoke.png
+smoke_*.png
+*.log
