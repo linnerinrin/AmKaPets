@@ -16,3 +16,5 @@ wheelhouse/
 popup_smoke.png
 smoke_*.png
 *.log
+pytest-of-*/
+.pytest-of-*/
