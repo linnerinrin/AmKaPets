@@ -98,6 +98,14 @@ class MoodSettings:
 
 
 @dataclass
+class AudioSettings:
+    """音乐律动设置：开关 + 触发间隔（秒）。间隔范围见 audio.MIN/MAX_INTERVAL_SECONDS。"""
+
+    enabled: bool = True
+    interval_seconds: float = 1.5
+
+
+@dataclass
 class AppSettings:
     """应用整体设置。"""
 
@@ -106,3 +114,4 @@ class AppSettings:
     pets: list[PetConfig] = field(default_factory=list)
     chat: ChatSettings = field(default_factory=ChatSettings)
     mood: MoodSettings = field(default_factory=MoodSettings)
+    audio: AudioSettings = field(default_factory=AudioSettings)

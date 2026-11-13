@@ -18,7 +18,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .models import AppSettings, ChatSettings, MoodSettings, PetConfig, PhysicsParams
+from .audio import MAX_INTERVAL_SECONDS, MIN_INTERVAL_SECONDS
+from .models import AppSettings, AudioSettings, ChatSettings, MoodSettings, PetConfig, PhysicsParams
 
 APP_DIR_NAME = "ka-am-pet"
 
@@ -122,6 +123,23 @@ def _parse_mood(raw: Any) -> MoodSettings:
     )
 
 
+def _parse_audio(raw: Any) -> AudioSettings:
+    default = AudioSettings()
+    if not isinstance(raw, dict):
+        if raw is not None:
+            _warn("audio")
+        return default
+    return AudioSettings(
+        enabled=bool(raw.get("enabled", default.enabled)),
+        interval_seconds=_num(
+            raw.get("interval_seconds"),
+            default.interval_seconds,
+            MIN_INTERVAL_SECONDS,
+            MAX_INTERVAL_SECONDS,
+        ),
+    )
+
+
 def _parse_pets(raw: Any) -> list[PetConfig]:
     default = default_config().pets
     if not isinstance(raw, list) or not raw:
@@ -198,9 +216,10 @@ def load_config(path: Path) -> AppSettings:
         pets=_parse_pets(raw.get("pets")),
         chat=_parse_chat(raw.get("chat")),
         mood=_parse_mood(raw.get("mood")),
+        audio=_parse_audio(raw.get("audio")),
     )
     # 未知字段保留：随 settings 携带，保存时合回
-    known = {"mode", "physics", "pets", "chat", "mood"}
+    known = {"mode", "physics", "pets", "chat", "mood", "audio"}
     settings.unknown_fields = {k: v for k, v in raw.items() if k not in known}  # type: ignore[attr-defined]
     return settings
 
@@ -241,6 +260,10 @@ def save_config(settings: AppSettings, path: Path) -> None:
                 "drag_boost_per_second": settings.mood.drag_boost_per_second,
                 "throw_boost": settings.mood.throw_boost,
                 "prompts": settings.mood.prompts,
+            },
+            "audio": {
+                "enabled": settings.audio.enabled,
+                "interval_seconds": settings.audio.interval_seconds,
             },
         }
     )

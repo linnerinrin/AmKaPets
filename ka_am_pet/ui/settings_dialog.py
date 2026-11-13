@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ka_am_pet.audio import MAX_INTERVAL_SECONDS, MIN_INTERVAL_SECONDS
 from ka_am_pet.models import AppSettings
 
 
@@ -67,6 +69,20 @@ class SettingsDialog(QDialog):
         self._throw_power.setSingleStep(0.1)
         self._throw_power.setValue(settings.physics.throw_power)
 
+        # 音乐律动：开关 + 触发间隔（1.0s = 动画 0.2s + 飘字 0.8s，最快）
+        self._music_enabled = QCheckBox("听到音乐就跟着摇摆")
+        self._music_enabled.setChecked(settings.audio.enabled)
+        self._music_interval = QDoubleSpinBox()
+        self._music_interval.setRange(MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS)
+        self._music_interval.setSingleStep(0.5)
+        self._music_interval.setDecimals(1)
+        self._music_interval.setSuffix(" 秒")
+        self._music_interval.setValue(settings.audio.interval_seconds)
+        self._music_interval.setToolTip(
+            f"两次摇摆的最短间隔：最快 {MIN_INTERVAL_SECONDS:g} 秒（动画 0.2s + 飘字 0.8s），"
+            f"最慢 {MAX_INTERVAL_SECONDS:g} 秒"
+        )
+
         form = QFormLayout()
         form.addRow("Base URL", self._base_url)
         form.addRow("API Key", self._api_key)
@@ -78,6 +94,8 @@ class SettingsDialog(QDialog):
         form.addRow("重力", self._gravity)
         form.addRow("弹性系数", self._restitution)
         form.addRow("抛掷力度", self._throw_power)
+        form.addRow("音乐律动", self._music_enabled)
+        form.addRow("律动频率（间隔）", self._music_interval)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
@@ -102,5 +120,7 @@ class SettingsDialog(QDialog):
         s.physics.gravity = self._gravity.value()
         s.physics.restitution = self._restitution.value()
         s.physics.throw_power = self._throw_power.value()
+        s.audio.enabled = self._music_enabled.isChecked()
+        s.audio.interval_seconds = self._music_interval.value()
         self.settings_saved.emit(s)
         self.accept()

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ka_am_pet.audio import MusicReactor
+from ka_am_pet.audio import MAX_INTERVAL_SECONDS, MIN_INTERVAL_SECONDS, MusicReactor, clamp_interval
 
 
 def test_silence_never_triggers():
@@ -47,3 +47,13 @@ def test_none_peak_is_ignored():
     r = MusicReactor()
     assert r.feed(None, 0.0) is False
     assert r.playing is False
+
+
+def test_interval_bounds_clamped():
+    # 最快 1.0s（动画 0.2 + 飘字 0.8），最慢 10s
+    assert (MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS) == (1.0, 10.0)
+    assert clamp_interval(0.2) == 1.0
+    assert clamp_interval(60) == 10.0
+    assert clamp_interval(3.0) == 3.0
+    assert MusicReactor(interval_seconds=0.01).interval == 1.0
+    assert MusicReactor(interval_seconds=99).interval == 10.0

@@ -19,6 +19,18 @@ _ON_PEAK = 0.008
 _OFF_PEAK = 0.004
 _QUIET_FRAMES = 3
 
+# 律动间隔（秒）范围：
+#   下限 1.0 = 拉伸动画 0.2s + 飘字 0.8s，再快就会两段动画互相打断；
+#   上限 10.0 = 再慢就不像"跟着音乐"，退化成偶尔动一下。
+MIN_INTERVAL_SECONDS = 1.0
+MAX_INTERVAL_SECONDS = 10.0
+DEFAULT_INTERVAL_SECONDS = 1.5
+
+
+def clamp_interval(seconds: float) -> float:
+    """把律动间隔夹进 [MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS]。"""
+    return max(MIN_INTERVAL_SECONDS, min(MAX_INTERVAL_SECONDS, float(seconds)))
+
 
 class GUID(Structure):
     """Win32 GUID 结构（从 uuid 字符串构造）。"""
@@ -144,15 +156,20 @@ class MusicReactor:
         on_peak: float = _ON_PEAK,
         off_peak: float = _OFF_PEAK,
         quiet_frames: int = _QUIET_FRAMES,
-        interval_seconds: float = 1.5,
+        interval_seconds: float = DEFAULT_INTERVAL_SECONDS,
     ) -> None:
         self._on_peak = on_peak
         self._off_peak = off_peak
         self._quiet_frames = quiet_frames
-        self._interval = interval_seconds
+        self._interval = clamp_interval(interval_seconds)
         self._quiet_count = 0
         self._last_trigger: float | None = None
         self.playing = False
+
+    @property
+    def interval(self) -> float:
+        """当前触发间隔（秒）。"""
+        return self._interval
 
     def feed(self, peak: float | None, now: float) -> bool:
         """喂一次采样；返回 True 表示此刻应当触发一次触摸动画。"""
@@ -176,12 +193,12 @@ class MusicReactor:
 class AudioWatcher(threading.Thread):
     """后台轮询系统输出峰值的守护线程（Qt 主线程只读 playing/peak）。"""
 
-    def __init__(self, poll_seconds: float = 0.4) -> None:
+    def __init__(self, poll_seconds: float = 0.4, interval_seconds: float = DEFAULT_INTERVAL_SECONDS) -> None:
         super().__init__(daemon=True, name="audio-watcher")
         self._poll = poll_seconds
         self._stop = threading.Event()
         self._meter = AudioPeakMeter()
-        self.reactor = MusicReactor()
+        self.reactor = MusicReactor(interval_seconds=interval_seconds)
         self.peak: float = 0.0
         self.triggered = False  # 主线程读取后自行复位
 

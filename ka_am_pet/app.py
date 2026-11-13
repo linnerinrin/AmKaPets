@@ -58,6 +58,7 @@ class PetApplication:
         """
         app_data_dir().mkdir(parents=True, exist_ok=True)
         self.settings = config_mod.load_config(self._config_path)
+        self._music_enabled = self.settings.audio.enabled
         self.db = InstanceDB(app_data_dir() / "pets.db")
         self._ensure_default_instances()
         self.memory = MemoryStore(app_data_dir() / "memory.json", self.settings.chat.memory_rounds)
@@ -156,9 +157,10 @@ class PetApplication:
     # ---- 音乐律动（系统音频检测） ----
 
     def _sync_audio_watcher(self) -> None:
-        """按开关启动/停止后台音频监听；设备不可用时静默跳过（不影响桌宠）。"""
+        """按开关与间隔启动/停止后台音频监听；设备不可用时静默跳过（不影响桌宠）。"""
+        wanted_interval = self.settings.audio.interval_seconds if self.settings is not None else 1.5
         if self._music_enabled and self._audio is None:
-            watcher = AudioWatcher()
+            watcher = AudioWatcher(interval_seconds=wanted_interval)
             if watcher.available:
                 self._audio = watcher
                 watcher.start()
@@ -167,10 +169,22 @@ class PetApplication:
         elif not self._music_enabled and self._audio is not None:
             self._audio.stop()
             self._audio = None
+        elif self._audio is not None and self._audio.reactor.interval != wanted_interval:
+            # 间隔改了：直接换一个监听线程（比改状态机字段更干净）
+            self._audio.stop()
+            watcher = AudioWatcher(interval_seconds=wanted_interval)
+            if watcher.available:
+                self._audio = watcher
+                watcher.start()
+            else:
+                self._audio = None
 
     def _toggle_music(self, enabled: bool) -> None:
-        """右键/托盘菜单里的「音乐律动」开关。"""
+        """右键/托盘菜单里的「音乐律动」开关（顺手写回配置）。"""
         self._music_enabled = bool(enabled)
+        if self.settings is not None:
+            self.settings.audio.enabled = self._music_enabled
+            config_mod.save_config(self.settings, self._config_path)
         self._sync_audio_watcher()
 
     def _virtual_bounds(self) -> tuple[float, float, float, float]:
@@ -412,6 +426,8 @@ class PetApplication:
 
     def _on_settings_saved(self, settings: AppSettings) -> None:
         config_mod.save_config(settings, self._config_path)
+        self._music_enabled = settings.audio.enabled
+        self._sync_audio_watcher()
 
     def _save_positions(self) -> None:
         """退出时把每只宠物的最后位置写回实例库。"""
