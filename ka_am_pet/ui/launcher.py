@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from ka_am_pet.db import InstanceDB, PetInstance
+from ka_am_pet.models import ChatOverrides
 
 # 可选基底角色（assets/pets/<base>/ 下有四档心情贴图）
 BASE_CHARACTERS: tuple[tuple[str, str], ...] = (
@@ -29,12 +30,13 @@ BASE_CHARACTERS: tuple[tuple[str, str], ...] = (
 
 
 class InstanceEditDialog(QDialog):
-    """新建/编辑单个实例：基底角色、名字、尺寸、独立提示词。"""
+    """新建/编辑单个实例：基底、名字、尺寸、人格提示词、实例级对话 API 覆盖。"""
 
     def __init__(self, parent=None, instance: PetInstance | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("编辑实例" if instance else "新建实例")
+        self.setWindowTitle("实例设置" if instance else "新建实例")
         self._instance = instance
+        self.resize(460, 620)
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -64,6 +66,35 @@ class InstanceEditDialog(QDialog):
         self.prompt_edit.setPlaceholderText("这只宠物专属的人格提示词（留空用全局设置）")
         self.prompt_edit.setFixedHeight(90)
         form.addRow("独立提示词", self.prompt_edit)
+
+        # ---- 实例级对话 API 覆盖（留空 / 0 = 继承全局设置）----
+        chat = instance.chat if instance else ChatOverrides()
+        form.addRow(QLabel("— 单独设置这只宠物的对话 API（留空 = 跟随全局）—"))
+
+        self.base_url_edit = QLineEdit(chat.base_url)
+        self.base_url_edit.setPlaceholderText("留空继承全局，例如 https://api.openai.com/v1")
+        form.addRow("Base URL", self.base_url_edit)
+
+        self.api_key_edit = QLineEdit(chat.api_key)
+        self.api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key_edit.setPlaceholderText("留空继承全局")
+        form.addRow("API Key", self.api_key_edit)
+
+        self.model_edit = QLineEdit(chat.model)
+        self.model_edit.setPlaceholderText("留空继承全局，例如 gpt-4o-mini")
+        form.addRow("模型", self.model_edit)
+
+        self.rounds_spin = QSpinBox()
+        self.rounds_spin.setRange(0, 100)
+        self.rounds_spin.setSpecialValueText("继承全局")
+        self.rounds_spin.setValue(int(chat.memory_rounds))
+        form.addRow("记忆轮数", self.rounds_spin)
+
+        self.timeout_spin = QSpinBox()
+        self.timeout_spin.setRange(0, 300)
+        self.timeout_spin.setSpecialValueText("继承全局")
+        self.timeout_spin.setValue(int(chat.timeout_seconds))
+        form.addRow("超时（秒）", self.timeout_spin)
 
         layout.addLayout(form)
         buttons = QDialogButtonBox(
@@ -97,6 +128,16 @@ class InstanceEditDialog(QDialog):
     @property
     def system_prompt(self) -> str:
         return self.prompt_edit.toPlainText().strip()
+
+    @property
+    def chat_overrides(self) -> ChatOverrides:
+        return ChatOverrides(
+            base_url=self.base_url_edit.text().strip().rstrip("/"),
+            api_key=self.api_key_edit.text().strip(),
+            model=self.model_edit.text().strip(),
+            memory_rounds=self.rounds_spin.value(),
+            timeout_seconds=self.timeout_spin.value(),
+        )
 
 
 class LauncherWindow(QDialog):
@@ -170,7 +211,9 @@ class LauncherWindow(QDialog):
     def _create(self) -> None:
         dlg = InstanceEditDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._db.create(dlg.base, dlg.pet_name, dlg.system_prompt, dlg.size)
+            self._db.create(
+                dlg.base, dlg.pet_name, dlg.system_prompt, dlg.size, chat=dlg.chat_overrides
+            )
             self.reload()
 
     def _edit_selected(self) -> None:
@@ -185,6 +228,7 @@ class LauncherWindow(QDialog):
             inst.name = dlg.pet_name
             inst.size = dlg.size
             inst.system_prompt = dlg.system_prompt
+            inst.chat = dlg.chat_overrides
             self._db.update(inst)
             self.reload()
 

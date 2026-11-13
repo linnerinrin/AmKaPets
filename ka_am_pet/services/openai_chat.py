@@ -34,7 +34,13 @@ class ChatService:
         self._settings = settings
         self._session = session or requests.Session()
 
-    def send(self, pet_id: str, user_text: str, history: list[dict]) -> str:
+    def send(
+        self,
+        pet_id: str,
+        user_text: str,
+        history: list[dict],
+        settings: ChatSettings | None = None,
+    ) -> str:
         """发送一轮对话，返回助手文本。
 
         messages = system prompt + history + 当前 user_text；显式 timeout；
@@ -43,10 +49,11 @@ class ChatService:
         :param pet_id: 宠物 id（用于日志/扩展，不发送）。
         :param user_text: 用户输入。
         :param history: 最近 N 轮消息字典列表。
+        :param settings: 本次请求使用的对话设置（实例级合并结果）；None 用全局设置。
         :return: 助手回复文本。
         :raises ChatError: 未配 Key / 网络 / 超时 / HTTP 非 2xx / 缺字段，中文描述。
         """
-        s = self._settings
+        s = settings or self._settings
         if not s.api_key.strip():
             raise ChatError("还没有配置 API Key，请先在设置里填写。")
 

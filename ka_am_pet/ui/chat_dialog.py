@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ka_am_pet.models import ChatSettings
 from ka_am_pet.services.memory import MemoryStore
 from ka_am_pet.services.openai_chat import ChatError, ChatService
 
@@ -35,23 +36,24 @@ class ChatDialog(QDialog):
         pet_name: str,
         chat_service: ChatService,
         memory: MemoryStore,
-        mood_prompt: str = "",
+        chat_settings: ChatSettings | None = None,
         parent=None,
     ) -> None:
         """构造对话窗口。
 
         :param pet_id: 对话所属宠物 id。
         :param pet_name: 宠物显示名（窗口标题）。
-        :param chat_service: 对话服务。
+        :param chat_service: 对话服务（持有共享 Session）。
         :param memory: 记忆存储（全量展示 + 最近 N 轮上下文）。
-        :param mood_prompt: 当前心情提示词（拼到 system prompt 末尾）。
+        :param chat_settings: 本实例合并后的对话设置（None 用全局设置）；
+            已在调用方拼好实例人格与心情提示词。
         :param parent: Qt 父控件。
         """
         super().__init__(parent)
         self._pet_id = pet_id
         self._chat_service = chat_service
         self._memory = memory
-        self._mood_prompt = mood_prompt
+        self._settings = chat_settings or chat_service._settings  # noqa: SLF001（只读兜底）
         self._busy = False
 
         self.setWindowTitle(f"和 {pet_name} 聊天")
@@ -76,8 +78,12 @@ class ChatDialog(QDialog):
 
         for msg in memory.all_messages(pet_id):
             self._append_line(msg.role, msg.content)
-        if not chat_service._settings.api_key.strip():  # noqa: SLF001（展示用只读）
+        if not self._settings.api_key.strip():
             self._append_line("system", "还没有配置 API Key，去右键菜单 → 设置里填写吧。")
+
+    def apply_settings(self, settings: ChatSettings) -> None:
+        """更新本窗口使用的合并设置（心情/实例 API 改动后由调用方刷新）。"""
+        self._settings = settings
 
     def _append_line(self, role: str, content: str) -> None:
         label = {"user": "你", "assistant": "宠物", "system": "系统"}.get(role, role)
@@ -90,25 +96,17 @@ class ChatDialog(QDialog):
         self._input.clear()
         self._append_line("user", text)
         self._memory.append(self._pet_id, "user", text)
-        history = self._memory.context_for(self._pet_id)[:-1]  # 最后一条是当前输入，由 send 追加
-        mood = self._mood_prompt
+        rounds = self._settings.memory_rounds
+        history = self._memory.context_for(self._pet_id, rounds=rounds)[:-1]  # 最后一条是当前输入，由 send 追加
         self._busy = True
         self._send_btn.setEnabled(False)
         self._send_btn.setText("思考中…")
 
         def worker() -> None:
             try:
-                service = self._chat_service
-                if mood:
-                    # 心情提示词拼到 system prompt 末尾（不改配置本身）
-                    original = service._settings.system_prompt  # noqa: SLF001
-                    service._settings.system_prompt = f"{original}\n{mood}"  # noqa: SLF001
-                    try:
-                        reply = service.send(self._pet_id, text, history)
-                    finally:
-                        service._settings.system_prompt = original  # noqa: SLF001
-                else:
-                    reply = service.send(self._pet_id, text, history)
+                reply = self._chat_service.send(
+                    self._pet_id, text, history, settings=self._settings
+                )
                 self.reply_ready.emit(self._pet_id, reply)
             except ChatError as exc:
                 self.error_occurred.emit(self._pet_id, exc.message)

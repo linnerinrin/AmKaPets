@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 from . import config as config_mod
 from .audio import AudioWatcher
 from .db import InstanceDB, PetInstance
-from .models import AppSettings, PetConfig
+from .models import AppSettings, PetConfig, effective_chat
 from .mood import MOOD_LEVELS, mood_image_name
 from .resources import app_data_dir, asset_path
 from .services.memory import MemoryStore
@@ -264,7 +264,7 @@ class PetApplication:
                 mood_act.setEnabled(False)
                 sub.addSeparator()
                 sub.addAction("对话", lambda pid=pet.pet_id: self._open_chat(pid))
-                sub.addAction("编辑实例", lambda pid=pet.pet_id: self._edit_instance(pid))
+                sub.addAction("实例设置…", lambda pid=pet.pet_id: self._edit_instance(pid))
                 sub.addAction("移除该实例", lambda pid=pet.pet_id: self._remove_instance(pid))
             menu.addSeparator()
         menu.addAction("新增实例…", self._add_instance)
@@ -298,31 +298,38 @@ class PetApplication:
         assert self.world is not None
         self.world.click_pet(pet_id)
 
+    def _chat_settings_for(self, pet_id: str):
+        """按实例合并对话设置：全局 + 实例 API 覆盖 + 实例人格 + 当前心情提示词。"""
+        assert self.settings is not None and self.world is not None
+        inst = self.db.get(pet_id) if self.db is not None else None
+        overrides = inst.chat if inst is not None else None
+        inst_prompt = inst.system_prompt if inst is not None else ""
+        mood_prompt = self.world.mood_tracker(pet_id).prompt()
+        return effective_chat(self.settings.chat, overrides, inst_prompt, mood_prompt)
+
     def _open_chat(self, pet_id: str) -> None:
         assert self.world is not None and self.memory is not None and self.chat_service is not None
         dialog = self._chat_dialogs.get(pet_id)
         if dialog is None:
-            # 独立提示词 + 心情提示词 拼接到全局 system prompt 末尾
-            extras = []
-            inst_prompt = ""
-            if self.db is not None:
-                inst = self.db.get(pet_id)
-                if inst is not None:
-                    inst_prompt = inst.system_prompt.strip()
-            if inst_prompt:
-                extras.append(inst_prompt)
-            extras.append(self.world.mood_tracker(pet_id).prompt())
             dialog = ChatDialog(
                 pet_id,
                 self._name_of(pet_id),
                 self.chat_service,
                 self.memory,
-                mood_prompt="\n".join(extras),
+                chat_settings=self._chat_settings_for(pet_id),
             )
             self._chat_dialogs[pet_id] = dialog
+        else:
+            dialog.apply_settings(self._chat_settings_for(pet_id))  # 心情/设置可能已变
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
+
+    def _reset_chat_dialogs(self) -> None:
+        """设置变更后关掉对话窗口，下次打开按新设置重建。"""
+        for dialog in self._chat_dialogs.values():
+            dialog.close()
+        self._chat_dialogs.clear()
 
     def _show_menu(self, pet_id: str, global_pos: QPoint) -> None:
         """宠物身上的右键菜单（与托盘菜单同构）。"""
@@ -333,6 +340,7 @@ class PetApplication:
             mood_action.setEnabled(False)
             menu.addSeparator()
         action_chat = menu.addAction("对话")
+        action_instance = menu.addAction("实例设置…")
         action_settings = menu.addAction("全局设置")
         menu.addSeparator()
         action_mode = menu.addAction(
@@ -346,6 +354,8 @@ class PetApplication:
         chosen = menu.exec(global_pos)
         if chosen is action_chat:
             self._open_chat(pet_id)
+        elif chosen is action_instance:
+            self._edit_instance(pet_id)
         elif chosen is action_settings:
             self._open_settings()
         elif chosen is action_mode:
@@ -365,7 +375,9 @@ class PetApplication:
         dlg = InstanceEditDialog()
         if dlg.exec() != InstanceEditDialog.DialogCode.Accepted:
             return
-        inst = self.db.create(dlg.base, dlg.pet_name, dlg.system_prompt, dlg.size)
+        inst = self.db.create(
+            dlg.base, dlg.pet_name, dlg.system_prompt, dlg.size, chat=dlg.chat_overrides
+        )
         self._respawn_shell()
         _log.info("新增实例 %s (%s)", inst.id, inst.name)
 
@@ -383,12 +395,13 @@ class PetApplication:
         inst.name = dlg.pet_name
         inst.size = dlg.size
         inst.system_prompt = dlg.system_prompt
+        inst.chat = dlg.chat_overrides
         self.db.update(inst)
         # 尺寸可能变了：更新世界并重建壳
         if self.world is not None:
             self.world.get_pet(pet_id).size = inst.size
         self._respawn_shell()
-        # 对话窗标题/提示词可能过期：关掉让它下次重建
+        # 对话窗的提示词/API 可能过期：关掉让它下次重建
         dialog = self._chat_dialogs.pop(pet_id, None)
         if dialog is not None:
             dialog.close()
@@ -428,6 +441,7 @@ class PetApplication:
         config_mod.save_config(settings, self._config_path)
         self._music_enabled = settings.audio.enabled
         self._sync_audio_watcher()
+        self._reset_chat_dialogs()  # 全局 API/提示词变了：下次对话按新设置重建
 
     def _save_positions(self) -> None:
         """退出时把每只宠物的最后位置写回实例库。"""

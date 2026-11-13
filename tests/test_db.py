@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ka_am_pet.db import InstanceDB
+from ka_am_pet.models import ChatOverrides, ChatSettings, effective_chat
 
 
 def _db(tmp_path) -> InstanceDB:
@@ -73,3 +74,63 @@ class TestInstanceDB:
         assert inst is not None
         assert inst.name == "糖糖"
         db2.close()
+
+    def test_instance_chat_overrides_roundtrip(self, tmp_path):
+        """实例级对话覆盖项：新建 → 读回 → 更新 → 重开仍在。"""
+        db = _db(tmp_path)
+        ov = ChatOverrides(
+            base_url="https://api.example.com/v1",
+            api_key="sk-instance",
+            model="gpt-4o",
+            memory_rounds=3,
+            timeout_seconds=20,
+        )
+        pid = db.create("kangel", "小天", chat=ov).id
+        got = db.get(pid)
+        assert got is not None
+        assert (got.chat.base_url, got.chat.api_key, got.chat.model) == (
+            "https://api.example.com/v1",
+            "sk-instance",
+            "gpt-4o",
+        )
+        assert (got.chat.memory_rounds, got.chat.timeout_seconds) == (3, 20)
+        # 默认实例没有覆盖项 → 所有字段为空（等于继承全局）
+        other = db.create("ame", "糖糖")
+        assert other.chat.is_empty()
+        # 更新覆盖项
+        got.chat = ChatOverrides(model="gpt-4o-mini")
+        db.update(got)
+        assert db.get(pid).chat.model == "gpt-4o-mini"
+        db.close()
+        db2 = InstanceDB(tmp_path / "pets.db")
+        assert db2.get(pid).chat.model == "gpt-4o-mini"
+        db2.close()
+
+    def test_effective_chat_merges_instance_overrides(self):
+        """effective_chat：实例覆盖优先，未覆盖项回退全局，提示词按需拼接。"""
+        glob = ChatSettings(
+            base_url="https://global.example/v1",
+            api_key="sk-global",
+            model="global-model",
+            system_prompt="全局人格",
+            memory_rounds=5,
+            timeout_seconds=45,
+        )
+        # 全空覆盖 → 完全继承
+        same = effective_chat(glob, ChatOverrides())
+        assert (same.base_url, same.api_key, same.model) == (
+            "https://global.example/v1",
+            "sk-global",
+            "global-model",
+        )
+        assert same.memory_rounds == 5 and same.timeout_seconds == 45
+        # 部分覆盖 + 实例人格 + 心情提示词
+        merged = effective_chat(
+            glob, ChatOverrides(model="own-model", memory_rounds=2), "我是小天", "心情很好"
+        )
+        assert merged.model == "own-model"
+        assert merged.memory_rounds == 2
+        assert merged.api_key == "sk-global"  # 未覆盖 → 全局
+        assert merged.system_prompt == "我是小天\n心情很好"
+        # 入参不被修改
+        assert glob.system_prompt == "全局人格"

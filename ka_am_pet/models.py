@@ -86,6 +86,55 @@ class ChatSettings:
 
 
 @dataclass
+class ChatOverrides:
+    """单个实例的对话 API 覆盖项：空串 / 0 表示「继承全局设置」。"""
+
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    memory_rounds: int = 0
+    timeout_seconds: int = 0
+
+    def is_empty(self) -> bool:
+        """没有任何覆盖项（全部继承全局）时返回 True。"""
+        return not (
+            self.base_url
+            or self.api_key
+            or self.model
+            or self.memory_rounds
+            or self.timeout_seconds
+        )
+
+
+def effective_chat(
+    global_chat: ChatSettings,
+    overrides: ChatOverrides | None = None,
+    instance_prompt: str = "",
+    mood_prompt: str = "",
+) -> ChatSettings:
+    """把全局对话设置 + 实例覆盖 + 实例人格/心情提示词合成一份新设置。
+
+    :param global_chat: 全局 ChatSettings（缺省值的来源）。
+    :param overrides: 实例级覆盖项（None 或全空 = 完全继承）。
+    :param instance_prompt: 实例独立人格提示词（空则用全局 system_prompt）。
+    :param mood_prompt: 心情提示词（非空则追加到系统提示词末尾）。
+    :return: 合并后的新 ChatSettings（不修改入参）。
+    """
+    ov = overrides or ChatOverrides()
+    prompt = instance_prompt.strip() or global_chat.system_prompt
+    if mood_prompt.strip():
+        prompt = f"{prompt}\n{mood_prompt.strip()}"
+    return ChatSettings(
+        base_url=(ov.base_url or global_chat.base_url).rstrip("/"),
+        api_key=ov.api_key or global_chat.api_key,
+        model=ov.model or global_chat.model,
+        system_prompt=prompt,
+        memory_rounds=ov.memory_rounds or global_chat.memory_rounds,
+        timeout_seconds=ov.timeout_seconds or global_chat.timeout_seconds,
+    )
+
+
+@dataclass
 class MoodSettings:
     """心情系统设置（数值见 AGENTS.md §6.5）。prompts 非空项覆盖默认提示词。"""
 

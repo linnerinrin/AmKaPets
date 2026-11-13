@@ -44,16 +44,18 @@ class MemoryStore:
             )
             self._save()
 
-    def context_for(self, pet_id: str) -> list[dict]:
-        """返回最近 memory_rounds 轮的 [{"role","content"}, ...]（升序，不含 system prompt）。
+    def context_for(self, pet_id: str, rounds: int | None = None) -> list[dict]:
+        """返回最近 rounds 轮（默认 memory_rounds）的 [{"role","content"}, ...]。
 
         :param pet_id: 宠物 id。
-        :return: 可拼进 OpenAI messages 的字典列表。
+        :param rounds: 本次请求的轮数覆盖（实例级设置用）；None 用存储的默认值。
+        :return: 可拼进 OpenAI messages 的字典列表（升序，不含 system prompt）。
         """
         with self._lock:
             msgs = list(self._messages.get(pet_id, []))
-        # 一轮 = user + assistant 两条，取最近 memory_rounds*2 条
-        tail = msgs[-self._memory_rounds * 2 :]
+        n = max(1, int(rounds)) if rounds else self._memory_rounds
+        # 一轮 = user + assistant 两条，取最近 n*2 条
+        tail = msgs[-n * 2 :]
         return [{"role": m.role, "content": m.content} for m in tail]
 
     def all_messages(self, pet_id: str) -> list[ChatMessage]:
