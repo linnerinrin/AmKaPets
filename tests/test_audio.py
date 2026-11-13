@@ -50,10 +50,10 @@ def test_none_peak_is_ignored():
 
 
 def test_interval_bounds_clamped():
-    # 最快 1.0s（动画 0.2 + 飘字 0.8），最慢 10s
-    assert (MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS) == (1.0, 10.0)
-    assert clamp_interval(0.2) == 1.0
+    # 最快 0.5s（飘字可重叠叠放），最慢 10s
+    assert (MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS) == (0.5, 10.0)
+    assert clamp_interval(0.2) == 0.5
     assert clamp_interval(60) == 10.0
     assert clamp_interval(3.0) == 3.0
-    assert MusicReactor(interval_seconds=0.01).interval == 1.0
+    assert MusicReactor(interval_seconds=0.01).interval == 0.5
     assert MusicReactor(interval_seconds=99).interval == 10.0

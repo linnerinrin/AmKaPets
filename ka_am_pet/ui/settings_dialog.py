@@ -69,18 +69,18 @@ class SettingsDialog(QDialog):
         self._throw_power.setSingleStep(0.1)
         self._throw_power.setValue(settings.physics.throw_power)
 
-        # 音乐律动：开关 + 触发间隔（1.0s = 动画 0.2s + 飘字 0.8s，最快）
+        # 音乐律动：开关 + 触发间隔（0.5s 起，飘字可重叠叠放）
         self._music_enabled = QCheckBox("听到音乐就跟着摇摆")
         self._music_enabled.setChecked(settings.audio.enabled)
         self._music_interval = QDoubleSpinBox()
         self._music_interval.setRange(MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS)
-        self._music_interval.setSingleStep(0.5)
+        self._music_interval.setSingleStep(0.1)
         self._music_interval.setDecimals(1)
         self._music_interval.setSuffix(" 秒")
         self._music_interval.setValue(settings.audio.interval_seconds)
         self._music_interval.setToolTip(
-            f"两次摇摆的最短间隔：最快 {MIN_INTERVAL_SECONDS:g} 秒（动画 0.2s + 飘字 0.8s），"
-            f"最慢 {MAX_INTERVAL_SECONDS:g} 秒"
+            f"两次摇摆的间隔：最快 {MIN_INTERVAL_SECONDS:g} 秒（飘字可重叠），"
+            f"最慢 {MAX_INTERVAL_SECONDS:g} 秒；越小越欢"
         )
 
         form = QFormLayout()

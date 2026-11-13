@@ -57,7 +57,7 @@ def test_corrupt_json_backed_up_and_rebuilt(tmp_path):
 
 
 def test_audio_settings_default_and_clamped(tmp_path):
-    """音乐律动：缺省开启且间隔 1.5s；越界间隔被夹进 [1.0, 10.0]。"""
+    """音乐律动：缺省开启且间隔 1.5s；越界间隔被夹进 [0.5, 10.0]。"""
     path = tmp_path / "config.json"
     settings = config.load_config(path)
     assert settings.audio.enabled is True
@@ -66,7 +66,7 @@ def test_audio_settings_default_and_clamped(tmp_path):
     path.write_text(json.dumps({"audio": {"enabled": False, "interval_seconds": 0.1}}), encoding="utf-8")
     settings = config.load_config(path)
     assert settings.audio.enabled is False
-    assert settings.audio.interval_seconds == 1.0
+    assert settings.audio.interval_seconds == 0.5
 
     path.write_text(json.dumps({"audio": {"interval_seconds": 99}}), encoding="utf-8")
     assert config.load_config(path).audio.interval_seconds == 10.0

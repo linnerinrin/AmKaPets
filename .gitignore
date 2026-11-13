@@ -19,3 +19,4 @@ smoke_*.png
 pytest-of-*/
 .pytest-of-*/
 settings_smoke.png
+popup_stack_smoke.png

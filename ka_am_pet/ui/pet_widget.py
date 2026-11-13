@@ -61,8 +61,7 @@ class PetWidget(QWidget):
 
         # 动画状态
         self._click_anim_at: float | None = None   # 点击拉伸动画起点
-        self._popup_text: str | None = None        # 心情飘字内容
-        self._popup_at: float = 0.0                # 飘字起点
+        self._popups: list[tuple[str, float]] = []  # 飘字队列 (文字, 起点时间)，可重叠多条
         self._mirrored = self._desired_mirror()    # 当前是否镜像
         self._flip_at: float | None = None         # 翻转动画起点
         self._flip_swapped = False                 # 翻转中点是否已换向
@@ -108,24 +107,28 @@ class PetWidget(QWidget):
         left, _, right, _ = self._world.bounds
         return (state.x + state.width / 2) < (left + right) / 2
 
+    def _push_popup(self, text: str) -> None:
+        """把一条飘字压进队列（允许重叠，最多同时 5 条，超出丢最旧的）。"""
+        now = time.monotonic()
+        self._popups = [(t, at) for t, at in self._popups if now - at < _POPUP_S]
+        self._popups.append((text, now))
+        if len(self._popups) > 5:
+            self._popups = self._popups[-5:]
+
     def play_click_feedback(self) -> None:
         """点击反馈：0.2s 拉伸动画 + 心情浮动飘字（读 tracker.last_delta）。"""
-        now = time.monotonic()
-        self._click_anim_at = now
+        self._click_anim_at = time.monotonic()
         tracker = self._world.mood_tracker(self._pet_cfg.id)
         value = tracker.value
         delta = tracker.last_delta
         sign = f"+{delta:g}" if delta > 0 else f"{delta:g}"
-        self._popup_text = f"心情 {sign} → {value:.0f}"
-        self._popup_at = now
+        self._push_popup(f"心情 {sign} → {value:.0f}")
         self.update()
 
     def play_music_reaction(self) -> None:
         """听见系统音乐时的触摸回应：同样的 0.2s 拉伸动画 + ♪ 飘字（不改心情值）。"""
-        now = time.monotonic()
-        self._click_anim_at = now
-        self._popup_text = random.choice(_MUSIC_TEXTS)
-        self._popup_at = now
+        self._click_anim_at = time.monotonic()
+        self._push_popup(random.choice(_MUSIC_TEXTS))
         self.update()
 
     def tick(self) -> None:
@@ -145,11 +148,12 @@ class PetWidget(QWidget):
         # 过期动画清理
         if self._click_anim_at is not None and time.monotonic() - self._click_anim_at >= _CLICK_ANIM_S:
             self._click_anim_at = None
-        if self._popup_text is not None and time.monotonic() - self._popup_at >= _POPUP_S:
-            self._popup_text = None
+        if self._popups:
+            now = time.monotonic()
+            self._popups = [(text, at) for text, at in self._popups if now - at < _POPUP_S]
         self.refresh_image()
         self.sync_geometry()
-        if self._click_anim_at is not None or self._flip_at is not None or self._popup_text is not None:
+        if self._click_anim_at is not None or self._flip_at is not None or self._popups:
             self.update()
 
     def _scales(self) -> tuple[float, float]:
@@ -191,38 +195,43 @@ class PetWidget(QWidget):
         self._paint_popup()
 
     def _paint_popup(self) -> None:
-        """心情飘字：白底圆角标签 + 深描边，从头顶区域内上升并淡出。"""
-        if self._popup_text is None:
+        """飘字：白底圆角标签 + 深描边；同时可叠多条，新的在下、旧的往上排。"""
+        if not self._popups:
             return
-        t = (time.monotonic() - self._popup_at) / _POPUP_S  # 0..1
-        # 前 80% 保持不透明，最后 20% 才淡出——保证一眼能看见
-        alpha = 1.0 if t < 0.8 else max(0.0, 1.0 - (t - 0.8) / 0.2)
-        rise = int(30 * t)
+        now = time.monotonic()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         font = QFont("Microsoft YaHei", max(11, self.width() // 17), QFont.Weight.Bold)
         painter.setFont(font)
-        # 从控件顶部区域内向上飘：起点 46px，终点 16px，不被窗口裁掉
-        line = QRectF(0, 46 - rise, self.width(), 32)
-        # 文字实际像素宽度用于画白底标签
         metrics = painter.fontMetrics()
-        text_w = metrics.horizontalAdvance(self._popup_text)
-        chip = QRectF(
-            (self.width() - text_w) / 2 - 10,
-            line.y() + 1,
-            text_w + 20,
-            line.height() - 2,
-        )
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(255, 255, 255, int(225 * alpha)))
-        painter.drawRoundedRect(chip, 9, 9)
-        # 深色描边（8 方向）+ 填充
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)):
-            painter.setPen(QColor(60, 30, 45, int(220 * alpha)))
-            painter.drawText(line.translated(dx, dy), Qt.AlignmentFlag.AlignHCenter, self._popup_text)
-        painter.setPen(QColor(235, 70, 135, int(255 * alpha)))
-        painter.drawText(line, Qt.AlignmentFlag.AlignHCenter, self._popup_text)
+        total = len(self._popups)
+        for index, (text, started) in enumerate(self._popups):  # 旧 → 新
+            t = (now - started) / _POPUP_S  # 0..1
+            if t >= 1.0:
+                continue
+            # 前 80% 保持不透明，最后 20% 才淡出——保证一眼能看见
+            alpha = 1.0 if t < 0.8 else max(0.0, 1.0 - (t - 0.8) / 0.2)
+            newer = total - 1 - index           # 比它新的条数
+            rise = int(16 * t) + newer * 26     # 新条贴头顶，旧条往上挪一格
+            # 从控件顶部区域内向上飘：起点 46px，终点 16px，不被窗口裁掉
+            line = QRectF(0, max(2.0, 46 - rise), self.width(), 32)
+            text_w = metrics.horizontalAdvance(text)
+            chip = QRectF(
+                (self.width() - text_w) / 2 - 10,
+                line.y() + 1,
+                text_w + 20,
+                line.height() - 2,
+            )
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(255, 255, 255, int(225 * alpha)))
+            painter.drawRoundedRect(chip, 9, 9)
+            # 深色描边（8 方向）+ 填充
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)):
+                painter.setPen(QColor(60, 30, 45, int(220 * alpha)))
+                painter.drawText(line.translated(dx, dy), Qt.AlignmentFlag.AlignHCenter, text)
+            painter.setPen(QColor(235, 70, 135, int(255 * alpha)))
+            painter.drawText(line, Qt.AlignmentFlag.AlignHCenter, text)
         painter.end()
 
     # ---- 鼠标交互 ----

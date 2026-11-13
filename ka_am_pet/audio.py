@@ -20,9 +20,9 @@ _OFF_PEAK = 0.004
 _QUIET_FRAMES = 3
 
 # 律动间隔（秒）范围：
-#   下限 1.0 = 拉伸动画 0.2s + 飘字 0.8s，再快就会两段动画互相打断；
+#   下限 0.5 = 约每秒两次摇摆（飘字允许重叠叠放，不会互相覆盖丢失）；
 #   上限 10.0 = 再慢就不像"跟着音乐"，退化成偶尔动一下。
-MIN_INTERVAL_SECONDS = 1.0
+MIN_INTERVAL_SECONDS = 0.5
 MAX_INTERVAL_SECONDS = 10.0
 DEFAULT_INTERVAL_SECONDS = 1.5
 
