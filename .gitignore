@@ -18,3 +18,4 @@ smoke_*.png
 *.log
 pytest-of-*/
 .pytest-of-*/
+settings_smoke.png
