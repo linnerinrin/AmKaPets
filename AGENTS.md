@@ -381,6 +381,7 @@ pytest>=8,<9
 
 ## 12. 工作方式与完成定义
 
+0. **改动前先对齐（用户明确要求）**：收到一轮新需求后，先用自己的话复述一遍需求，对模糊点给出建议并**多提问**，等用户确认后再动手；如果评估后认为某条做不到或代价过大，要**明确告诉用户**（但仍应尽可能先尝试，不要直接放弃）。
 1. 先搭可运行最小骨架：单宠物 + idle + 点击回应。
 2. 再加甩抛纯函数和测试，然后接入 UI。
 3. 再加多宠物与碰撞，确保两种模式共享世界。
@@ -389,3 +390,147 @@ pytest>=8,<9
 6. 最终回复应列出：修改文件、测试命令与结果、EXE 完整路径、真实对话是否实测、任何剩余限制。
 
 完成定义不是“代码写完”，而是 **桌面 EXE 可启动、四项核心功能可用、两种模式可切换、测试全绿、交付路径明确**。
+
+## 13. 代码架构规范：模块化、低耦合与 SOLID（用户明确要求）
+
+> 本节为强制工程规范。任何任务完成后必须依据本节逐条自检，并在回复中说明自检结果。
+
+### 13.1 文件规模红线
+
+- 单个 `.py` 文件**目标不超过 200 行，硬上限 300 行**；超过 300 行即视为架构异味，必须拆分，不允许出现 600+ 行的「上帝文件」。
+- 函数目标不超过 30 行；类目标不超过 200 行。超过时优先考虑职责拆分而非压缩空行。
+- 禁止用「都放一起方便改」为理由合并模块。
+
+### 13.2 模块化：一个模块对应一个软件包，而非一个上帝文件
+
+- 以第 3 节目录结构为基线：`physics/`、`collision/`、`animation/`、`mood/`、`services/`、`ui/` 等各为一个职责单一的包/模块。
+- 每个模块只暴露明确的公共接口（`__all__` 或文档字符串声明），内部实现细节不外泄。
+- 分层依赖单向：`ui/` → `world.py` → `physics.py` / `collision.py` / `mood.py` / `services/`；**纯逻辑层（physics / collision / mood / memory / config）禁止 import Qt 或反向依赖 UI**。
+- 模块间通过数据类（`models.py`）与显式接口通信，不共享可变全局状态，不互相读内部字段。
+
+### 13.3 SOLID 落地要求
+
+- **SRP（单一职责）**：一个文件/类只做一件事。例如 `openai_chat.py` 只发请求与解析，不碰 UI、不写文件。
+- **OCP（开闭）**：新增动画动作、心情档位、聊天后端时以「新增类/数据」扩展，而不是修改既有分支逻辑。
+- **LSP（里氏替换）**：子类可替换父类使用；overlay 与 desktop 渲染壳必须实现同一渲染接口，可互换。
+- **ISP（接口隔离）**：调用方只依赖自己用到的接口；不出现「大而全」的胖接口类。
+- **DIP（依赖倒置）**：上层依赖抽象而非具体实现。例如 `ChatDialog` 依赖「聊天服务协议」，由装配处（`app.py`）注入 `OpenAIChatService` 或 Mock 实现；副作用（文件、网络、时钟）一律注入，便于测试。
+
+### 13.4 注释与可读性（面向用户阅读）
+
+- 每个公共模块、类、函数必须有 docstring：说明**做什么、为什么这么做、输入输出**，而不是复述代码。
+- 关键物理公式、碰撞公式、心情档位映射等处必须带行内注释标明出处与单位（如 `px/s`、`e=0.995` 对应 AGENTS.md 第 6 节）。
+- 命名表意：不用 `tmp`、`data2`、`flag` 一类无意义命名；常量集中定义并注释含义。
+- 复杂逻辑用「分步小函数 + 注释」表达，不堆长表达式。
+
+### 13.5 每次任务完成后的架构自检清单（必做）
+
+完成任何代码任务后，逐条检查并在最终回复中给出结论：
+
+1. 本次改动后的文件是否都 ≤ 300 行？超出的列出拆分计划。
+2. 是否新增/维持了正确的模块边界？有没有纯逻辑层 import Qt、UI 反向依赖等违规？
+3. 是否符合 SOLID（重点：单一职责、依赖注入、渲染壳可互换）？
+4. 公共接口与关键公式是否都有注释？
+5. `venv\Scripts\python.exe -m pytest` 是否全绿？
+
+不满足任一条时，先修正再交付；确实无法立刻满足的，必须明确写出原因与补救计划，不得隐瞒。
+
+### 13.6 Qt mixin 的 MRO 红线（血泪教训，必守）
+
+- **任何提供 Qt 虚函数（`paintEvent` / `mousePressEvent` / `timerEvent` 等）的 mixin，在类定义中必须排在 Qt 基类（如 `QWidget`）之前**：
+  `class PetWidget(PetAnimationMixin, ..., QWidget)` ✅；
+  `class PetWidget(QWidget, PetAnimationMixin, ...)` ❌。
+- 原因：PySide6 按 MRO 分派这些虚函数，`QWidget` 自带的空实现若排在前，会**静默遮蔽** mixin 的实现——窗口能创建、可见、样式正常，但从不绘制、点击无响应，且无任何报错（2026-11-15「宠物不可见」事故的根因）。
+- 回归防线：`tests/test_widget_mro.py` 已固化该顺序；以后新增 mixin 拆分时同步补断言。
+
+### 13.7 给控件 setStyleSheet 必须带选择器（血泪教训，必守）
+
+- `widget.setStyleSheet(f"background: {color}; border: none;")` 这种**没有选择器的声明**，Qt 会当成
+  `* { … }` **级联给所有子控件**，把 `theme.content_stylesheet` 里 QLineEdit / QSpinBox 的白底、
+  1px 边框、内边距全部顶掉——输入框看起来「失去样式但文字还在」(2026-11-16 事故)。
+- 正确写法：先 `widget.setObjectName(PAGE_OBJECT_NAME)`，再
+  `setStyleSheet(f"QWidget#{PAGE_OBJECT_NAME} {{ background: {bg}; }}")`，只影响这一个容器。
+- 回归防线：`ka_am_pet/ui/sidebar.py` 的 `PAGE_OBJECT_NAME = "dshDialogPage"` + `add_page()`。
+
+### 13.8 QSS 描边会毁掉 Qt 原生 spin 箭头 / combo 下拉框（血泪教训，必守）
+
+- 只要 `content_stylesheet` 给 QSpinBox/QDoubleSpinBox 加了 border / border-radius / padding，
+  Qt 就走 QStyleSheetStyle 分支，原生上/下箭头被画成残缺的「⌐」L 形；QComboBox 的 drop-down
+  同理（右侧一条断掉的 L 边框）。
+- **不要用 `ButtonSymbols.NoButtons` 去掉箭头**：QStyleSheetStyle 会把内部 QLineEdit 算成 1px 宽，
+  数字直接不显示（实测 `lineEdit().geometry() == (0, 5, 1, 19)`）。
+- 唯一稳定做法（已封装在 `ka_am_pet/ui/fields.py`）：保留 UpDownArrows，用 QSS 把 `::up-button` /
+  `::down-button` / `::drop-down` 设成「20px 宽、`border: none`、透明」，把 `::up-arrow` /
+  `::down-arrow` 设成 `image: none; width: 0`，再由混入类 `paintEvent` 自绘三角。这样内部
+  QLineEdit 恢复 `(0, 5, 219, 19)`，数字不被遮挡。
+- QSS 里**不要**用 `image: url(绝对路径)` 引 PNG 资源：Windows 反斜杠路径会让整张样式表
+  解析失败（`Could not parse stylesheet`），静默不生效。需要图标就自绘。
+- 回归防线：`tests/test_widget_mro.py` 的 `test_arrow_field_mixins_precede_qt_bases` /
+  `test_chevron_combo_mixin_precedes_qt_base`。
+
+### 13.9 配置只存在实例里；心情数值是常量（第四轮定型，必守）
+
+- **没有「跟随全局」**：`PetOverrides`（历史命名，语义已是「该实例自己的完整设置」）持
+  `physics: PhysicsParams`、`chat: ChatSettings`、`music: AudioSettings`、`pat_pool: tuple[str, ...]`。
+  不要重新引入 `None = 继承` 或 `is_empty()` 这类语义——旧数据库的空 `overrides_json` 由
+  `PetOverrides.from_dict(raw, fallback)` 回落默认值，`dump_overrides()` 恒写完整 JSON。
+- **心情数值全部写死**：`models/mood.py` 的 `MOOD_INITIAL=80.0`、`MOOD_DECAY=0.1`、
+  `PAT_RANGE/DRAG_RANGE/FLIGHT_RANGE=(0,2)` 是唯一来源，`MoodSettings.from_dict` 只读 `prompts`，
+  界面上只展示不给改。改数值请改常量，不要恢复配置读取。
+- `AppSettings.mood` 只作为「新建实例 / 心情提示词」的载体；`PetWorld._resolve()` 直接
+  `replace(overrides.physics/music)`，不再有 `resolve_physics/resolve_audio/resolve_mood`。
+- **结算飘字走事件**：拖拽/飞行期间 `PetWorld` 用 `_drag_delta/_flight_delta` 累计增量，
+  结束时 `flush_mood_event()` 产出一条 `MoodEvent`（增量为 0 不发），壳层每帧
+  `drain_events()` → `ka_am_pet/ui/mood_feed.py` → `PetWidget.play_mood_event()`。
+  新增「结束时提示」类需求一律复用这条事件通道，不要在 UI 层自己算差值。
+- **直播练习**：`MoodTracker.set_practice(on)` 快照当前值并钉 100，退出恢复；
+  `PetWorld.practice_on/set_practice` 转发。心情卡片的按钮经 app 层回调，不直接碰 tracker。
+- **状态卡片要可扩展**：`ui/settings_dialog/cards.py` 里 `StatusCard`（类属性 `key` + `refresh(data)`）
+  + `StatusCardFrame.add_card/refresh` 按 key 分发；新增状态就新写一个子类塞进 frame，
+  不要往对话框里塞 if/else。
+- 回归防线：`tests/test_config.py::test_mood_numbers_are_always_fixed_constants`、
+  `tests/test_db.py::TestInstanceDB::test_instance_overrides_roundtrip`、
+  `tests/test_db.py::TestInstanceDB::test_mood_numbers_are_not_persisted`。
+
+### 13.10 UI 分层与「一处实现」原则（第四轮抽象审计结论，必守）
+
+审计发现并已修正的四处重复，后续改动不得回退：
+
+- **渲染壳必须继承 `ui/shell_base.py:PetShell`**：控件装配、四个交互信号
+  （`pet_clicked / pat_requested / menu_requested / passthrough_changed`）、`tick()`
+  （先 `flush_mood_events` 再 `widget.tick()` + `music_tick`）、`music_reaction()`、
+  `close_shell()` 只在基类实现。`ui/desktop.py` 与 `ui/overlay.py` 只实现
+  `_prepare()` / `_create_widget()`（overlay 额外允许覆盖 `close_shell`/`set_opacity`/
+  `nativeEvent`/`_accepts`）。新增壳种照此继承，**不要**再复制一遍装配循环。
+  回归防线：`tests/test_shell_interface.py`。
+- **样式表文本住 `ui/qss.py`**：`nav_stylesheet / content_stylesheet / panel_stylesheet /
+  bubble_colors` 是纯字符串生成，与 `theme.py`（只放配色数据与派生色计算）分开；
+  消费方 `from .qss import …`，不要从 `theme.py` 再导一遍。
+- **通用布局工具住 `ui/layout.py`**：`hint()` / `scroll()` / `vbox()` 被聊天框、
+  全局设置、实例设置共用，不要再寄居在 `ui/sidebar.py` 里被反向 import。
+- **菜单动作只有一份**：`app/tray.py:_add_pet_actions(menu, pet_id, *, include_remove=False)`
+  同时供给托盘实例子菜单（`include_remove=True`）与宠物右键菜单；新增右键项改这里一处。
+  回归防线：`tests/test_menu_actions.py`。
+
+### 13.11 调试产物用完即删，禁止用 .gitignore 兜底（用户明确要求，必守）
+
+用户原话（2026-11-16）：「你这补的规则治标不治本啊，以后调试完垃圾用完就删吧。」
+补 ignore 规则等于承认「垃圾会一直躺在仓库里」，以后每次都要维护规则、还可能漏网。
+所以纪律是**产出即清理**，不是**产出即忽略**。
+
+- **调试产物不许留在仓库里**：诊断截图 `diag_*.png`、`evidence_*.png`、`probe_*.png`、
+  `smoke_*.png`、抓屏输出 `diag_status_out.txt` / `live_out.txt` / `live_err.txt`、
+  一次性脚本、临时 sqlite、`ka-am-pet.spec`、`build/`、`dist/`、`.userdata/`（源码兜底数据目录除外，
+  见下）——用完当场删，不要「先留着，说不定还要看」。
+  本仓库 2026-11-16 清理过一次：删掉 3 张诊断截图（3.4MB）、2 个输出 txt、6 个 `scripts/diag_*.py`、
+  `diag_imgs.py`、`ka-am-pet.spec`，以及 54MB `build/` + 50MB `dist/`。
+- **`.gitignore` 只放环境/构建产物**：`venv/`、`__pycache__/`、`dist/`、`build/`、`*.spec`、
+  `.pytest_cache/`、`.idea/`、`wheelhouse/`、`.userdata/`。
+  想加新规则前先自问：这条是「**本该被删掉的东西**」还是「**环境产物**」？
+  前者去删文件，不要写规则；只有后者才配待在 `.gitignore` 里。
+- **调试脚本要留就留得干净**：放 `scripts/` 的脚本必须在仓库外产生产物——
+  截图写 `tempfile.gettempdir()`（参考 `scripts/click_popup_smoke.py`、
+  `scripts/gui_smoke.py`），文件头用 docstring 说明用途；一次性的诊断脚本不要入库，跑完删掉。
+- **提交前自检**：`git status --porcelain` 只允许出现本次预期改动的文件；
+  一旦冒出未跟踪的 `*.png` / `*.txt` / `*.db` / `*.spec` / `*.log`，先删掉再谈提交，
+  不要 `git add` 进索引、更不要加 ignore 规则掩盖。

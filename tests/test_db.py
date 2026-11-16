@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
+import os
+import sqlite3
+import stat
+
 from ka_am_pet.db import InstanceDB
-from ka_am_pet.models import ChatOverrides, ChatSettings, effective_chat
+from ka_am_pet.models import (
+    AudioSettings,
+    ChatOverrides,
+    ChatSettings,
+    MoodSettings,
+    PetOverrides,
+    effective_chat,
+)
 
 
 def _db(tmp_path) -> InstanceDB:
@@ -75,36 +86,69 @@ class TestInstanceDB:
         assert inst.name == "糖糖"
         db2.close()
 
-    def test_instance_chat_overrides_roundtrip(self, tmp_path):
-        """实例级对话覆盖项：新建 → 读回 → 更新 → 重开仍在。"""
+    def test_instance_overrides_roundtrip(self, tmp_path):
+        """实例设置组：新建 → 读回 → 更新 → 重开仍在（第四轮起是完整设置）。"""
         db = _db(tmp_path)
-        ov = ChatOverrides(
+        chat = ChatSettings(
             base_url="https://api.example.com/v1",
             api_key="sk-instance",
             model="gpt-4o",
+            system_prompt="我是小天",
             memory_rounds=3,
             timeout_seconds=20,
         )
-        pid = db.create("kangel", "小天", chat=ov).id
+        pid = db.create("kangel", "小天", overrides=PetOverrides(chat=chat)).id
         got = db.get(pid)
         assert got is not None
-        assert (got.chat.base_url, got.chat.api_key, got.chat.model) == (
-            "https://api.example.com/v1",
-            "sk-instance",
-            "gpt-4o",
-        )
-        assert (got.chat.memory_rounds, got.chat.timeout_seconds) == (3, 20)
-        # 默认实例没有覆盖项 → 所有字段为空（等于继承全局）
+        assert (
+            got.overrides.chat.base_url,
+            got.overrides.chat.api_key,
+            got.overrides.chat.model,
+        ) == ("https://api.example.com/v1", "sk-instance", "gpt-4o")
+        assert (got.overrides.chat.memory_rounds, got.overrides.chat.timeout_seconds) == (3, 20)
+        # 默认实例拿的是出厂设置组（不再有「空组=跟随全局」）
         other = db.create("ame", "糖糖")
-        assert other.chat.is_empty()
-        # 更新覆盖项
-        got.chat = ChatOverrides(model="gpt-4o-mini")
+        assert other.overrides.chat.model == ChatSettings().model
+        assert other.overrides.pat_pool == PetOverrides().pat_pool
+        # 更新：换整组（旧对话设置被整组替换）
+        got.overrides = PetOverrides(
+            chat=ChatSettings(model="gpt-4o-mini"),
+            music=AudioSettings(music_pool=("sway",), interval_seconds=2.5),
+            pat_pool=("nod", "sway"),
+        )
         db.update(got)
-        assert db.get(pid).chat.model == "gpt-4o-mini"
+        again = db.get(pid)
+        assert again.overrides.chat.model == "gpt-4o-mini"
+        assert again.overrides.music.music_pool == ("sway",)
+        assert again.overrides.music.interval_seconds == 2.5
+        assert again.overrides.pat_pool == ("nod", "sway")
         db.close()
         db2 = InstanceDB(tmp_path / "pets.db")
-        assert db2.get(pid).chat.model == "gpt-4o-mini"
+        reopened = db2.get(pid)
+        assert reopened.overrides.chat.model == "gpt-4o-mini"
+        assert reopened.overrides.pat_pool == ("nod", "sway")
         db2.close()
+
+    def test_passthrough_flag_roundtrip(self, tmp_path):
+        """覆盖模式（点不到）标记持久化。"""
+        db = _db(tmp_path)
+        pid = db.create("kangel", "小天").id
+        assert db.get(pid).passthrough is False
+        db.set_passthrough(pid, True)
+        assert db.get(pid).passthrough is True
+        db.close()
+        db2 = InstanceDB(tmp_path / "pets.db")
+        assert db2.get(pid).passthrough is True
+        db2.close()
+
+    def test_mood_numbers_are_not_persisted(self, tmp_path):
+        """第四轮起好感数值写死：实例设置组里不再有 mood 组，数据库里也不存。"""
+        db = _db(tmp_path)
+        pid = db.create("ame", "糖糖", overrides=PetOverrides(pat_pool=("pat",))).id
+        got = db.get(pid).overrides
+        assert not hasattr(got, "mood")
+        assert got.pat_pool == ("pat",)
+        db.close()
 
     def test_effective_chat_merges_instance_overrides(self):
         """effective_chat：实例覆盖优先，未覆盖项回退全局，提示词按需拼接。"""
@@ -134,3 +178,56 @@ class TestInstanceDB:
         assert merged.system_prompt == "我是小天\n心情很好"
         # 入参不被修改
         assert glob.system_prompt == "全局人格"
+
+
+def _legacy_db(tmp_path):
+    """造一个旧版库：缺 overrides_json/passthrough，启动时必须 ALTER。"""
+    db_path = tmp_path / "pets.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        "CREATE TABLE instances ("
+        " id TEXT PRIMARY KEY, base TEXT NOT NULL, name TEXT NOT NULL,"
+        " system_prompt TEXT NOT NULL DEFAULT '', size INTEGER NOT NULL DEFAULT 320,"
+        " x REAL, y REAL, created_ts REAL NOT NULL);"
+        "INSERT INTO instances (id, base, name, created_ts)"
+        " VALUES ('kangel-1', 'kangel', '旧记录', 1.0);"
+    )
+    conn.commit()
+    conn.close()
+    return db_path
+
+
+class TestReadOnlyRecovery:
+    """只读库：先原地修「只读属性」，修不动再复制到可写目录（不崩、不丢数据）。"""
+
+    def test_readonly_attr_is_repaired_in_place(self, tmp_path):
+        db_path = _legacy_db(tmp_path)
+        os.chmod(db_path, stat.S_IREAD)
+        try:
+            db = InstanceDB(db_path)
+            # 原地修复：不搬家、不提示
+            assert db.recovered_note == ""
+            assert db.path == db_path
+            assert [row.name for row in db.list_all()] == ["旧记录"]
+            assert db.create("ame", "新记录").id == "ame-1"
+            db.close()
+        finally:
+            os.chmod(db_path, stat.S_IWRITE)
+
+    def test_readonly_db_is_recovered_to_writable_dir(self, tmp_path, monkeypatch):
+        db_path = _legacy_db(tmp_path)
+        monkeypatch.setattr(InstanceDB, "_clear_readonly", staticmethod(lambda path: False))
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+        os.chmod(db_path, stat.S_IREAD)
+        try:
+            db = InstanceDB(db_path)
+            assert db.recovered_note
+            assert [row.name for row in db.list_all()] == ["旧记录"]
+            assert db.create("ame", "新记录").id == "ame-1"
+            assert db.get("kangel-1").overrides.chat.model == ChatSettings().model
+            db.close()
+            # 应急库在可写目录里，原库保持不动
+            assert db.path == tmp_path / "local" / "ka-am-pet" / "pets.db"
+            assert db.path.exists()
+        finally:
+            os.chmod(db_path, stat.S_IWRITE)

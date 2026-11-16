@@ -6,12 +6,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
 from pathlib import Path
 
 from ka_am_pet.models import ChatMessage
+
+_log = logging.getLogger(__name__)
 
 
 class MemoryStore:
@@ -103,12 +106,15 @@ class MemoryStore:
         self._messages = messages
 
     def _save(self) -> None:
-        """临时文件 + os.replace 原子写入。"""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        """临时文件 + os.replace 原子写入（写不进去只记日志，不让对话崩）。"""
         data = {
             pet_id: [{"role": m.role, "content": m.content, "ts": m.ts} for m in msgs]
             for pet_id, msgs in self._messages.items()
         }
-        tmp = self._path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, self._path)
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(tmp, self._path)
+        except OSError as exc:
+            _log.error("记忆无法写入 %s: %s", self._path, exc)

@@ -4,161 +4,55 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QComboBox,
     QDialog,
-    QDialogButtonBox,
-    QFormLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QPlainTextEdit,
     QPushButton,
-    QSpinBox,
-    QVBoxLayout,
 )
 
-from ka_am_pet.db import InstanceDB, PetInstance
-from ka_am_pet.models import ChatOverrides
-
-# 可选基底角色（assets/pets/<base>/ 下有四档心情贴图）
-BASE_CHARACTERS: tuple[tuple[str, str], ...] = (
-    ("kangel", "超天酱 (kangel)"),
-    ("ame", "糖糖 (ame)"),
-)
-
-
-class InstanceEditDialog(QDialog):
-    """新建/编辑单个实例：基底、名字、尺寸、人格提示词、实例级对话 API 覆盖。"""
-
-    def __init__(self, parent=None, instance: PetInstance | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("实例设置" if instance else "新建实例")
-        self._instance = instance
-        self.resize(460, 620)
-
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-
-        self.base_combo = QComboBox()
-        for base_id, label in BASE_CHARACTERS:
-            self.base_combo.addItem(label, base_id)
-        if instance is not None:
-            idx = self.base_combo.findData(instance.base)
-            if idx >= 0:
-                self.base_combo.setCurrentIndex(idx)
-            self.base_combo.setEnabled(False)  # 基底不可改（换了等于换角色）
-        form.addRow("基底角色", self.base_combo)
-
-        self.name_edit = QLineEdit(instance.name if instance else "")
-        self.name_edit.setPlaceholderText("给她起个名字")
-        form.addRow("名字", self.name_edit)
-
-        self.size_spin = QSpinBox()
-        self.size_spin.setRange(120, 640)
-        self.size_spin.setSingleStep(20)
-        self.size_spin.setValue(instance.size if instance else 320)
-        self.size_spin.setSuffix(" px")
-        form.addRow("大小", self.size_spin)
-
-        self.prompt_edit = QPlainTextEdit(instance.system_prompt if instance else "")
-        self.prompt_edit.setPlaceholderText("这只宠物专属的人格提示词（留空用全局设置）")
-        self.prompt_edit.setFixedHeight(90)
-        form.addRow("独立提示词", self.prompt_edit)
-
-        # ---- 实例级对话 API 覆盖（留空 / 0 = 继承全局设置）----
-        chat = instance.chat if instance else ChatOverrides()
-        form.addRow(QLabel("— 单独设置这只宠物的对话 API（留空 = 跟随全局）—"))
-
-        self.base_url_edit = QLineEdit(chat.base_url)
-        self.base_url_edit.setPlaceholderText("留空继承全局，例如 https://api.openai.com/v1")
-        form.addRow("Base URL", self.base_url_edit)
-
-        self.api_key_edit = QLineEdit(chat.api_key)
-        self.api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api_key_edit.setPlaceholderText("留空继承全局")
-        form.addRow("API Key", self.api_key_edit)
-
-        self.model_edit = QLineEdit(chat.model)
-        self.model_edit.setPlaceholderText("留空继承全局，例如 gpt-4o-mini")
-        form.addRow("模型", self.model_edit)
-
-        self.rounds_spin = QSpinBox()
-        self.rounds_spin.setRange(0, 100)
-        self.rounds_spin.setSpecialValueText("继承全局")
-        self.rounds_spin.setValue(int(chat.memory_rounds))
-        form.addRow("记忆轮数", self.rounds_spin)
-
-        self.timeout_spin = QSpinBox()
-        self.timeout_spin.setRange(0, 300)
-        self.timeout_spin.setSpecialValueText("继承全局")
-        self.timeout_spin.setValue(int(chat.timeout_seconds))
-        form.addRow("超时（秒）", self.timeout_spin)
-
-        layout.addLayout(form)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def accept(self) -> None:
-        if not self.name_edit.text().strip():
-            self.name_edit.setFocus()
-            self.name_edit.setPlaceholderText("名字不能为空！")
-            return
-        super().accept()
-
-    # ---- 结果 ----
-
-    @property
-    def base(self) -> str:
-        return self.base_combo.currentData()
-
-    @property
-    def pet_name(self) -> str:
-        return self.name_edit.text().strip()
-
-    @property
-    def size(self) -> int:
-        return self.size_spin.value()
-
-    @property
-    def system_prompt(self) -> str:
-        return self.prompt_edit.toPlainText().strip()
-
-    @property
-    def chat_overrides(self) -> ChatOverrides:
-        return ChatOverrides(
-            base_url=self.base_url_edit.text().strip().rstrip("/"),
-            api_key=self.api_key_edit.text().strip(),
-            model=self.model_edit.text().strip(),
-            memory_rounds=self.rounds_spin.value(),
-            timeout_seconds=self.timeout_spin.value(),
-        )
+from ka_am_pet import __version__
+from ka_am_pet.characters import base_label
+from ka_am_pet.db import InstanceDB
+from ka_am_pet.models import AppSettings
+from ka_am_pet.theme import theme_for
+from ka_am_pet.ui.settings_dialog import InstanceSettingsDialog
+from ka_am_pet.ui.sidebar import ThemedDialog
 
 
-class LauncherWindow(QDialog):
+class LauncherWindow(ThemedDialog):
     """启动器：列出全部实例，勾选启动；可新建/编辑/删除。"""
 
     instances_chosen = Signal(list)  # list[PetInstance] 用户勾选要启动的实例
 
-    def __init__(self, db: InstanceDB, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("ka-am-pet 启动器")
-        self._db = db
-        self.resize(460, 340)
+    def __init__(self, db: InstanceDB, settings: AppSettings, parent=None) -> None:
+        """构造启动器。
 
-        layout = QVBoxLayout(self)
+        :param db: 实例库。
+        :param settings: 全局配置（主题 + 实例设置对话框回填用）。
+        :param parent: Qt 父控件。
+        """
+        super().__init__(
+            f"ka-am-pet 启动器 v{__version__}",
+            theme_for(getattr(settings, "theme", "sky")),
+            parent,
+            size=(520, 470),
+        )
+        self._db = db
+        self._settings = settings
+
+        layout = self.content_layout
+        layout.setSpacing(10)  # 列表 / 按钮行 / 启动键之间留呼吸空间，别再挤成一坨
         layout.addWidget(QLabel("勾选要启动的桌宠（可多选）："))
 
         self.list = QListWidget()
+        self.list.setMinimumHeight(180)
         self.list.itemDoubleClicked.connect(lambda _item: self._edit_selected())
-        layout.addWidget(self.list)
+        layout.addWidget(self.list, 1)
 
         btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)  # 相邻按钮的圆角不再互相咬出白色缺口
         for text, handler in (
             ("新建", self._create),
             ("编辑", self._edit_selected),
@@ -167,11 +61,13 @@ class LauncherWindow(QDialog):
             ("全不选", lambda: self._set_all(Qt.CheckState.Unchecked)),
         ):
             btn = QPushButton(text)
+            btn.setMinimumHeight(32)
             btn.clicked.connect(handler)
             btn_row.addWidget(btn)
         layout.addLayout(btn_row)
 
         self.start_btn = QPushButton("启动选中的桌宠")
+        self.start_btn.setMinimumHeight(38)
         self.start_btn.setDefault(True)
         self.start_btn.clicked.connect(self._start)
         layout.addWidget(self.start_btn)
@@ -184,7 +80,7 @@ class LauncherWindow(QDialog):
         """从 DB 重新加载实例列表。"""
         self.list.clear()
         for inst in self._db.list_all():
-            item = QListWidgetItem(f"{inst.name}（{inst.base} · {inst.size}px）")
+            item = QListWidgetItem(f"{inst.name}（{base_label(inst.base)} · {inst.size}px）")
             item.setData(Qt.ItemDataRole.UserRole, inst.id)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked)
@@ -209,12 +105,19 @@ class LauncherWindow(QDialog):
     # ---- 操作 ----
 
     def _create(self) -> None:
-        dlg = InstanceEditDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._db.create(
-                dlg.base, dlg.pet_name, dlg.system_prompt, dlg.size, chat=dlg.chat_overrides
-            )
-            self.reload()
+        dlg = InstanceSettingsDialog(self._settings, None, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        result = dlg.result_instance
+        self._db.create(
+            result.base,
+            result.name,
+            result.system_prompt,
+            result.size,
+            overrides=result.overrides,
+            passthrough=result.passthrough,
+        )
+        self.reload()
 
     def _edit_selected(self) -> None:
         instance_id = self._current_id()
@@ -223,14 +126,11 @@ class LauncherWindow(QDialog):
         inst = self._db.get(instance_id)
         if inst is None:
             return
-        dlg = InstanceEditDialog(self, inst)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            inst.name = dlg.pet_name
-            inst.size = dlg.size
-            inst.system_prompt = dlg.system_prompt
-            inst.chat = dlg.chat_overrides
-            self._db.update(inst)
-            self.reload()
+        dlg = InstanceSettingsDialog(self._settings, inst, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._db.update(dlg.result_instance)
+        self.reload()
 
     def _delete_selected(self) -> None:
         instance_id = self._current_id()

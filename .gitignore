@@ -1,3 +1,7 @@
+# 这里只放「环境/构建产物」，不放调试垃圾。
+# 调试产物（截图、日志、临时脚本、db）一律用完即删，靠纪律而不是靠 ignore 兜底，
+# 规则见 AGENTS.md §13.11。
+
 venv/
 __pycache__/
 *.pyc
@@ -10,14 +14,5 @@ build/
 # 本地 wheelhouse 缓存（约 120MB，不入库）
 wheelhouse/
 
-# 本地冒烟/调试产物
-.smoke_appdata*/
-.tmp_extract*/
-popup_smoke.png
-smoke_*.png
-*.log
-pytest-of-*/
-.pytest-of-*/
-settings_smoke.png
-popup_stack_smoke.png
-instance_settings_smoke.png
+# 数据目录降级兜底（源码运行且 %APPDATA% 不可写时使用）
+.userdata/

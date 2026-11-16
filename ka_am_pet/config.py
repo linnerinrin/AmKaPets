@@ -18,10 +18,30 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .audio import MAX_INTERVAL_SECONDS, MIN_INTERVAL_SECONDS
-from .models import AppSettings, AudioSettings, ChatSettings, MoodSettings, PetConfig, PhysicsParams
+from .models import (
+    AppSettings,
+    AudioSettings,
+    ChatSettings,
+    MoodSettings,
+    PetConfig,
+    PhysicsParams,
+    coerce_float,
+    coerce_text,
+)
+from .resources import app_data_dir
 
 APP_DIR_NAME = "ka-am-pet"
+
+#: 配置结构版本：
+#: 2 起 mood.decay_per_second 默认 0.5/s（旧版是 0.1/s）；
+#: 3 起好感增益改为整数随机区间（摸头 [-1,2]、拖拽/飞行 [-1,1]/s），旧的
+#: click_boost / drag_boost_per_second / throw_boost 定值键不再迁移，直接重置为新默认；
+#: 4 起拖拽/飞行增益默认区间改为 [0,2]（用户口径），旧默认 [-1,1] 自动升级；
+#: 5 起心情自然下降默认改回 0.1/s（用户口径：掉慢点），旧的 0.5/s 自动升级，
+#: 同时 audio.sway_mode（单个动作）改为 audio.music_pool（可多选动作池）。
+#: 6 起好感数值全部写死（初始 80、下降 0.1/s、摸头/拖拽/飞行区间 [0,2]），
+#: 配置里的这些数字一律忽略——旧版本的迁移代码随之删除。
+CONFIG_VERSION = 6
 
 _log = logging.getLogger(__name__)
 
@@ -29,10 +49,8 @@ _VALID_MODES = ("overlay", "desktop")
 
 
 def default_config_path() -> Path:
-    """返回 %APPDATA%\\ka-am-pet\\config.json。"""
-    base = os.environ.get("APPDATA")
-    root = Path(base) if base else Path.home() / "AppData" / "Roaming"
-    return root / APP_DIR_NAME / "config.json"
+    """返回用户可写数据目录下的 config.json（默认 %APPDATA%\\ka-am-pet）。"""
+    return app_data_dir() / "config.json"
 
 
 def default_config() -> AppSettings:
@@ -48,96 +66,41 @@ def default_config() -> AppSettings:
     )
 
 
-def _num(value: Any, default: float, lo: float | None = None, hi: float | None = None) -> float:
-    """字段级数值校验：非法回退默认值，可选范围钳制。"""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return default
-    v = float(value)
-    if lo is not None:
-        v = max(lo, v)
-    if hi is not None:
-        v = min(hi, v)
-    return v
-
-
-def _str(value: Any, default: str) -> str:
-    return value if isinstance(value, str) and value else default
-
-
 def _warn(msg: str) -> None:
     """非阻塞警告（日志一次；UI 层可另行展示）。"""
     _log.warning("配置字段非法，已回退默认值: %s", msg)
 
 
 def _parse_physics(raw: Any) -> PhysicsParams:
-    default = PhysicsParams()
     if not isinstance(raw, dict):
         if raw is not None:
             _warn("physics")
-        return default
-    return PhysicsParams(
-        gravity=_num(raw.get("gravity"), default.gravity, 0.0, 10000.0),
-        restitution=_num(raw.get("restitution"), default.restitution, 0.0, 1.0),
-        ground_friction=_num(raw.get("ground_friction"), default.ground_friction, 0.0, 100.0),
-        ceiling_bounce=bool(raw.get("ceiling_bounce", default.ceiling_bounce)),
-        throw_power=_num(raw.get("throw_power"), default.throw_power, 0.0, 10.0),
-        pet_collision=bool(raw.get("pet_collision", default.pet_collision)),
-    )
+        return PhysicsParams()
+    return PhysicsParams.from_dict(raw)
 
 
 def _parse_chat(raw: Any) -> ChatSettings:
-    default = ChatSettings()
     if not isinstance(raw, dict):
         if raw is not None:
             _warn("chat")
-        return default
-    return ChatSettings(
-        base_url=_str(raw.get("base_url"), default.base_url).rstrip("/"),
-        api_key=raw.get("api_key") if isinstance(raw.get("api_key"), str) else "",
-        model=_str(raw.get("model"), default.model),
-        system_prompt=raw.get("system_prompt") if isinstance(raw.get("system_prompt"), str) else default.system_prompt,
-        memory_rounds=int(_num(raw.get("memory_rounds"), default.memory_rounds, 1, 100)),
-        timeout_seconds=int(_num(raw.get("timeout_seconds"), default.timeout_seconds, 5, 300)),
-    )
+        return ChatSettings()
+    return ChatSettings.from_dict(raw)
 
 
 def _parse_mood(raw: Any) -> MoodSettings:
-    default = MoodSettings()
     if not isinstance(raw, dict):
         if raw is not None:
             _warn("mood")
-        return default
-    prompts_raw = raw.get("prompts")
-    prompts = (
-        {str(k): v for k, v in prompts_raw.items() if isinstance(v, str)}
-        if isinstance(prompts_raw, dict)
-        else {}
-    )
-    return MoodSettings(
-        initial=_num(raw.get("initial"), default.initial, 0.0, 100.0),
-        decay_per_second=_num(raw.get("decay_per_second"), default.decay_per_second, 0.0, 100.0),
-        click_boost=_num(raw.get("click_boost"), default.click_boost, 0.0, 100.0),
-        drag_boost_per_second=_num(raw.get("drag_boost_per_second"), default.drag_boost_per_second, 0.0, 1000.0),
-        throw_boost=_num(raw.get("throw_boost"), default.throw_boost, 0.0, 100.0),
-        prompts=prompts,
-    )
+        return MoodSettings()
+    return MoodSettings.from_dict(raw)
 
 
 def _parse_audio(raw: Any) -> AudioSettings:
-    default = AudioSettings()
     if not isinstance(raw, dict):
         if raw is not None:
             _warn("audio")
-        return default
-    return AudioSettings(
-        enabled=bool(raw.get("enabled", default.enabled)),
-        interval_seconds=_num(
-            raw.get("interval_seconds"),
-            default.interval_seconds,
-            MIN_INTERVAL_SECONDS,
-            MAX_INTERVAL_SECONDS,
-        ),
-    )
+        return AudioSettings()
+    return AudioSettings.from_dict(raw)
 
 
 def _parse_pets(raw: Any) -> list[PetConfig]:
@@ -162,17 +125,18 @@ def _parse_pets(raw: Any) -> list[PetConfig]:
             pid = f"{base}-{n}"
             _warn(f"pets 重复 id -> {pid}")
         seen.add(pid)
-        size_raw = item.get("size")
-        size = int(_num(size_raw, 320, 64, 1024))
+        size = int(coerce_float(item.get("size"), 320, 64, 1024))
         x = item.get("x") if isinstance(item.get("x"), (int, float)) and not isinstance(item.get("x"), bool) else None
         y = item.get("y") if isinstance(item.get("y"), (int, float)) and not isinstance(item.get("y"), bool) else None
         pets.append(
             PetConfig(
                 id=pid,
-                name=_str(item.get("name"), pid),
+                name=coerce_text(item.get("name"), pid),
                 size=size,
                 x=float(x) if x is not None else None,
                 y=float(y) if y is not None else None,
+                base=coerce_text(item.get("base"), "", allow_empty=True),
+                system_prompt=coerce_text(item.get("system_prompt"), "", allow_empty=True),
             )
         )
     return pets or default
@@ -210,6 +174,7 @@ def load_config(path: Path) -> AppSettings:
             _warn(f"mode={mode!r}")
         mode = "desktop"
 
+    version = raw.get("version")
     settings = AppSettings(
         mode=mode,
         physics=_parse_physics(raw.get("physics")),
@@ -217,9 +182,13 @@ def load_config(path: Path) -> AppSettings:
         chat=_parse_chat(raw.get("chat")),
         mood=_parse_mood(raw.get("mood")),
         audio=_parse_audio(raw.get("audio")),
+        overlay_opacity=coerce_float(raw.get("overlay_opacity"), 0.92, 0.2, 1.0),
+        theme=coerce_text(raw.get("theme"), "sky"),
     )
+    if version is not None and (not isinstance(version, (int, float)) or version < CONFIG_VERSION):
+        _log.info("旧配置 version=%r 已按 v%d 的写死好感规则重新解析", version, CONFIG_VERSION)
     # 未知字段保留：随 settings 携带，保存时合回
-    known = {"mode", "physics", "pets", "chat", "mood", "audio"}
+    known = {"version", "mode", "physics", "pets", "chat", "mood", "audio", "overlay_opacity", "theme"}
     settings.unknown_fields = {k: v for k, v in raw.items() if k not in known}  # type: ignore[attr-defined]
     return settings
 
@@ -233,41 +202,33 @@ def save_config(settings: AppSettings, path: Path) -> None:
     data: dict[str, Any] = dict(getattr(settings, "unknown_fields", {}))
     data.update(
         {
+            "version": CONFIG_VERSION,
             "mode": settings.mode,
-            "physics": {
-                "gravity": settings.physics.gravity,
-                "restitution": settings.physics.restitution,
-                "ground_friction": settings.physics.ground_friction,
-                "ceiling_bounce": settings.physics.ceiling_bounce,
-                "throw_power": settings.physics.throw_power,
-                "pet_collision": settings.physics.pet_collision,
-            },
+            "physics": settings.physics.to_dict(),
             "pets": [
-                {"id": p.id, "name": p.name, "size": p.size, "x": p.x, "y": p.y} for p in settings.pets
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "size": p.size,
+                    "x": p.x,
+                    "y": p.y,
+                    "base": p.base,
+                    "system_prompt": p.system_prompt,
+                }
+                for p in settings.pets
             ],
-            "chat": {
-                "base_url": settings.chat.base_url,
-                "api_key": settings.chat.api_key,
-                "model": settings.chat.model,
-                "system_prompt": settings.chat.system_prompt,
-                "memory_rounds": settings.chat.memory_rounds,
-                "timeout_seconds": settings.chat.timeout_seconds,
-            },
-            "mood": {
-                "initial": settings.mood.initial,
-                "decay_per_second": settings.mood.decay_per_second,
-                "click_boost": settings.mood.click_boost,
-                "drag_boost_per_second": settings.mood.drag_boost_per_second,
-                "throw_boost": settings.mood.throw_boost,
-                "prompts": settings.mood.prompts,
-            },
-            "audio": {
-                "enabled": settings.audio.enabled,
-                "interval_seconds": settings.audio.interval_seconds,
-            },
+            "chat": settings.chat.to_dict(),
+            "mood": settings.mood.to_dict(),
+            "audio": settings.audio.to_dict(),
+            "overlay_opacity": round(float(settings.overlay_opacity), 2),
+            "theme": settings.theme,
         }
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        # 目录只读/被占用时不让设置保存失败拖垮整个应用
+        _log.error("配置无法写入 %s: %s", path, exc)
